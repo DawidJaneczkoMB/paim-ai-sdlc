@@ -1,0 +1,88 @@
+---
+description: React 19 hard constraints — enforced on every React component file
+globs: **/*.{tsx,jsx}
+alwaysApply: true
+---
+
+# React 19 — Hard Constraints
+
+For patterns reference (generic components, compound components, useRef typing, context, custom hooks), use the `frontend-react-typescript` skill.
+
+## Component Declaration
+
+Use function declarations. Never use `React.FC` or `React.FunctionComponent`.
+
+```tsx
+// BAD
+const UserCard: React.FC<UserCardProps> = ({ name }) => <div>{name}</div>;
+
+// GOOD
+function UserCard({ name }: UserCardProps) {
+  return <div>{name}</div>;
+}
+```
+
+## ref as Prop — No forwardRef
+
+Pass `ref` as a regular prop. `forwardRef` is deprecated in React 19.
+
+```tsx
+// BAD
+const Input = forwardRef<HTMLInputElement, InputProps>(({ label, ...props }, ref) => (
+  <div><label>{label}</label><input ref={ref} {...props} /></div>
+));
+
+// GOOD
+function Input({ ref, label, ...props }: InputProps) {
+  return <div><label>{label}</label><input ref={ref} {...props} /></div>;
+}
+```
+
+## No useFormState
+
+Use `useActionState` (React 19). `useFormState` is removed.
+
+## Event Handler Naming
+
+Prefix callback props with `on*`, handler implementations with `handle*`.
+
+```tsx
+type SearchBarProps = { readonly onSearch: (query: string) => void };
+
+function SearchBar({ onSearch }: SearchBarProps) {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSearch(new FormData(event.currentTarget).get('query') as string);
+  }
+  return <form onSubmit={handleSubmit}><input name="query" /></form>;
+}
+```
+
+## Context — Null-Initialized
+
+```tsx
+// BAD
+const AuthContext = createContext<AuthContextValue>(undefined!);
+
+// GOOD
+const AuthContext = createContext<AuthContextValue | null>(null);
+function useAuth(): AuthContextValue {
+  const context = useContext(AuthContext);
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  return context;
+}
+```
+
+## Props to State — initial Prefix
+
+```tsx
+// BAD
+function Editor({ content }: { readonly content: string }) {
+  const [value, setValue] = useState(content);
+}
+
+// GOOD
+function Editor({ initialContent }: { readonly initialContent: string }) {
+  const [value, setValue] = useState(initialContent);
+}
+```

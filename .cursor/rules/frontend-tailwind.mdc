@@ -1,0 +1,50 @@
+---
+description: Tailwind CSS hard constraints — enforced on every file using Tailwind classes
+globs: **/*.{tsx,ts,jsx,js,css}
+alwaysApply: true
+---
+
+# Tailwind CSS v4 — Hard Constraints
+
+For configuration, theming, CVA, responsive, dark mode, and container query reference, use the `frontend-tailwind` skill.
+
+## Never Construct Dynamic Class Names
+
+Tailwind scans source files as plain text. Dynamically constructed class names are invisible to the compiler.
+
+```tsx
+// BAD
+<div className={`bg-${color}-600`} />
+<div className={`text-${error ? 'red' : 'green'}-600`} />
+
+// GOOD
+<div className={error ? 'text-red-600' : 'text-green-600'} />
+```
+
+Map dynamic props to a static lookup object:
+
+```tsx
+const COLOR_VARIANTS = {
+  blue: 'bg-blue-100 text-blue-800',
+  red: 'bg-red-100 text-red-800',
+  green: 'bg-green-100 text-green-800',
+} as const;
+
+function Badge({ color }: { color: keyof typeof COLOR_VARIANTS }) {
+  return <span className={COLOR_VARIANTS[color]} />;
+}
+```
+
+## Never Use var() or Hex Colors in className
+
+Use Tailwind semantic classes. Reserve `var()` for library props that do not accept `className`.
+
+```tsx
+// BAD
+<div className="bg-[var(--color-primary)]" />
+<div className="text-[#1e293b]" />
+
+// GOOD
+<div className="bg-primary" />
+<div className="text-slate-800" />
+```

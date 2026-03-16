@@ -1,0 +1,499 @@
+---
+description: TypeScript coding conventions and type safety standards
+alwaysApply: true
+---
+
+# TypeScript Conventions
+
+**Official Docs** - [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/intro.html)
+
+## Type Definitions
+
+Use `type` aliases for all type definitions. Use `interface` only for declaration merging (e.g. extending third-party library types).
+
+```ts
+// BAD
+interface UserInfo {
+  name: string;
+  role: 'admin' | 'guest';
+}
+
+// GOOD
+type UserInfo = {
+  name: string;
+  role: 'admin' | 'guest';
+};
+```
+
+Use generic syntax for array types.
+
+```ts
+// BAD
+const items: string[] = ['a', 'b'];
+const readonlyItems: readonly string[] = ['a', 'b'];
+
+// GOOD
+const items: Array<string> = ['a', 'b'];
+const readonlyItems: ReadonlyArray<string> = ['a', 'b'];
+```
+
+## Type Inference
+
+Only add explicit type annotations when they narrow the type. Do not annotate when TypeScript already infers the correct narrow type.
+
+```ts
+// BAD - redundant annotation
+const name: string = 'admin';
+const [isActive, setIsActive] = useState<boolean>(false);
+
+// GOOD - inference is sufficient
+const name = 'admin'; // inferred as literal 'admin'
+const [isActive, setIsActive] = useState(false);
+
+// GOOD - annotation narrows a wide inference
+const employees = new Map<string, number>();
+type UserRole = 'admin' | 'guest';
+const [role, setRole] = useState<UserRole>('admin');
+```
+
+## Immutability
+
+Mark object properties as `readonly` by default. Omit `readonly` only when mutation is genuinely needed.
+
+```ts
+// BAD
+type User = {
+  id: string;
+  name: string;
+};
+
+// GOOD
+type User = {
+  readonly id: string;
+  readonly name: string;
+};
+```
+
+Use `ReadonlyArray<T>` for arrays that must not be mutated. When processing data, return new arrays/objects instead of mutating in place.
+
+```ts
+// BAD - mutates input
+function removeFirst(users: Array<User>): Array<User> {
+  users.splice(0, 1);
+  return users;
+}
+
+// GOOD - returns new array
+function removeFirst(users: ReadonlyArray<User>): ReadonlyArray<User> {
+  return users.slice(1);
+}
+```
+
+## Const Assertions
+
+Declare constants with `as const` for literal narrowing and immutability.
+
+```ts
+// BAD
+const LOCATION = { x: 50, y: 130 }; // { x: number; y: number }
+LOCATION.x = 10; // allowed
+
+// GOOD
+const LOCATION = { x: 50, y: 130 } as const; // { readonly x: 50; readonly y: 130 }
+```
+
+When a predefined type exists, combine `as const satisfies` for both validation and narrowing.
+
+```ts
+type OrderStatus = {
+  pending: 'pending' | 'idle';
+  fulfilled: boolean;
+  error: string;
+};
+
+// BAD - mutable, wide type
+const IDLE_ORDER: OrderStatus = { pending: 'idle', fulfilled: true, error: '' };
+
+// GOOD - immutable, validated, narrowed
+const IDLE_ORDER = {
+  pending: 'idle',
+  fulfilled: true,
+  error: '',
+} as const satisfies OrderStatus;
+```
+
+## Enums
+
+Do not introduce new enums. Retain existing enums in the codebase.
+
+Use literal types when you only need the type. Use `as const` arrays when you need to iterate. Use `as const` objects when mapping arbitrary key-value pairs.
+
+```ts
+// BAD
+enum UserRole {
+  GUEST = 'guest',
+  MODERATOR = 'moderator',
+  ADMIN = 'administrator',
+}
+
+// GOOD - literal type
+type UserRole = 'guest' | 'moderator' | 'administrator';
+
+// GOOD - iterable const array
+const USER_ROLES = ['guest', 'moderator', 'administrator'] as const;
+type UserRole = (typeof USER_ROLES)[number];
+
+// GOOD - key-value mapping
+const COLORS = {
+  primary: '#B33930',
+  secondary: '#113A5C',
+} as const;
+type ColorKey = keyof typeof COLORS;
+type ColorValue = (typeof COLORS)[ColorKey];
+```
+
+## Required vs Optional Properties
+
+Keep the majority of properties required. Use optional properties sparingly.
+
+When a property can be absent but you want callers to explicitly acknowledge it, prefer `T | undefined` over `?`. This forces the caller to pass the key, preventing silent omission bugs.
+
+```ts
+// BAD - easy to forget passing userId
+type AuthOptions = {
+  userId?: string;
+};
+
+// GOOD - caller must explicitly pass userId (even if undefined)
+type AuthOptions = {
+  readonly userId: string | undefined;
+};
+```
+
+## Discriminated Unions
+
+Use discriminated unions to model data that can be in distinct shapes. This eliminates "bags of optionals" and enables exhaustiveness checking.
+
+```ts
+// BAD - allows impossible states
+type FetchState<TData> = {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  data?: TData;
+  error?: Error;
+};
+
+// GOOD - each state carries exactly its required data
+type FetchState<TData> =
+  | { status: 'loading' }
+  | { status: 'success'; data: TData }
+  | { status: 'error'; error: Error };
+```
+
+Handle discriminated unions with `switch` and ensure exhaustiveness.
+
+```ts
+function render(state: FetchState<User>): string {
+  switch (state.status) {
+    case 'loading':
+      return 'Loading...';
+    case 'success':
+      return state.data.name;
+    case 'error':
+      return state.error.message;
+  }
+}
+```
+
+## Template Literal Types
+
+Use template literal types to enforce valid string patterns instead of raw `string`.
+
+```ts
+// BAD
+const version: string = '2.6.1';
+const endpoint: string = '/api/users';
+
+// GOOD
+type Version = `v${number}.${number}.${number}`;
+const version: Version = 'v2.6.1';
+
+type ApiRoute = 'users' | 'posts' | 'comments';
+type ApiEndpoint = `/api/${ApiRoute}`;
+const endpoint: ApiEndpoint = '/api/users';
+```
+
+## any, unknown, and Assertions
+
+Never use `any`. Use `unknown` for ambiguous data, then narrow before use.
+
+```ts
+// BAD
+function parse(input: any): number {
+  return input;
+}
+
+// GOOD
+function parse(input: unknown): number {
+  if (typeof input !== 'number') {
+    throw new Error('Expected a number');
+  }
+  return input;
+}
+```
+
+Avoid type assertions (`as T`) and non-null assertions (`!`). Use them only as a last resort with a comment explaining why.
+
+## Suppressing Type Errors
+
+When a TypeScript error truly cannot be fixed, use `@ts-expect-error` (never `@ts-ignore`). Always include a description.
+
+```ts
+// BAD
+// @ts-ignore
+const user = createUser('Gabriel');
+
+// GOOD
+// @ts-expect-error: library types incorrectly require number, but string is valid
+const user = createUser('Gabriel');
+```
+
+## Boolean Flags vs Type Unions
+
+Replace accumulating boolean flags with a single type union when states are mutually exclusive.
+
+```ts
+// BAD
+const isPending = true;
+const isProcessing = false;
+const isConfirmed = false;
+
+// GOOD
+type Status = 'pending' | 'processing' | 'confirmed' | 'expired';
+const status: Status = 'pending';
+```
+
+## null vs undefined
+
+- Use `null` to explicitly represent "no value" in assignments and return types.
+- Use `undefined` when the value does not exist (e.g. omitted fields in payloads, optional query params).
+
+## Imports
+
+### Type Imports
+
+Always use `import type` for type-only imports. Prefer top-level `import type` over inline `import { type ... }`.
+
+```ts
+// BAD - may leave side-effect import after transpilation
+import { type User } from './user';
+
+// GOOD
+import type { User } from './user';
+```
+
+### Named Exports
+
+Use named exports. Avoid default exports unless the framework requires them.
+
+```ts
+// BAD
+export default function createUser() { ... }
+
+// GOOD
+export function createUser() { ... }
+```
+
+## Functions
+
+### Declaration Syntax
+
+Use function declarations, not arrow function expressions, for named functions.
+
+```ts
+// BAD
+const getUser = (id: string): User | undefined => {
+  return db.find(id);
+};
+
+// GOOD
+function getUser(id: string): User | undefined {
+  return db.find(id);
+}
+```
+
+Arrow functions are appropriate for inline callbacks and short expressions passed as arguments.
+
+```ts
+// GOOD - inline callback
+const activeUsers = users.filter((user) => user.isActive);
+```
+
+### Purity and Responsibility
+
+Write functions that are pure, stateless, and have a single responsibility. Accept at least one argument and return data. Avoid side effects.
+
+### Single Object Argument
+
+When a function takes more than one primitive, use a single options object.
+
+```ts
+// BAD
+transformInput('client', false, 60, 120, null, true, 2000);
+
+// GOOD
+transformInput({
+  method: 'client',
+  isValidated: false,
+  minLines: 60,
+  maxLines: 120,
+  defaultInput: null,
+  shouldLog: true,
+  timeout: 2000,
+});
+```
+
+### Return Types
+
+Declare explicit return types on top-level / exported functions. This prevents accidental signature changes and improves readability.
+
+```ts
+// BAD - inferred return type may drift
+export function getUser(id: string) {
+  return db.find(id);
+}
+
+// GOOD
+export function getUser(id: string): User | undefined {
+  return db.find(id);
+}
+```
+
+For internal/private helpers, inference is acceptable.
+
+### Error Handling - Result Types
+
+Before throwing, consider whether a Result type is more appropriate. Use throwing when the framework expects it (e.g. request handlers). Use Result types when the caller would need a manual try-catch.
+
+```ts
+type Result<TValue, TError extends Error = Error> =
+  | { ok: true; value: TValue }
+  | { ok: false; error: TError };
+
+function parseJson(input: string): Result<unknown> {
+  try {
+    return { ok: true, value: JSON.parse(input) };
+  } catch (error) {
+    return { ok: false, error: error as Error };
+  }
+}
+
+const result = parseJson('{"name": "John"}');
+if (result.ok) {
+  console.log(result.value);
+} else {
+  console.error(result.error);
+}
+```
+
+### Discriminated Function Arguments
+
+When function args have mutually exclusive groups of properties, model them as a discriminated union instead of optional args.
+
+```ts
+// BAD
+type NotifyParams = {
+  data?: Products;
+  title?: string;
+  time?: number;
+  error?: string;
+};
+
+// GOOD
+type NotifyParams =
+  | { status: 'success'; data: Products; title: string }
+  | { status: 'loading'; time: number }
+  | { status: 'error'; error: string };
+
+function notify(params: NotifyParams): void { ... }
+```
+
+## Naming Conventions
+
+| Construct                  | Convention                       | Example                               |
+| -------------------------- | -------------------------------- | ------------------------------------- |
+| Local variables            | camelCase                        | `filteredProducts`                    |
+| Booleans                   | `is`/`has`/`should`/`can` prefix | `isDisabled`, `hasAccess`             |
+| Constants (primitives)     | UPPER_SNAKE_CASE                 | `MAX_RETRY_COUNT`                     |
+| Constants (objects/arrays) | UPPER_SNAKE_CASE + `as const`    | `const IDLE_ORDER = { ... } as const` |
+| Functions                  | camelCase                        | `filterByType`                        |
+| Types                      | PascalCase                       | `OrderStatus`                         |
+| Generic params             | `T` + PascalCase descriptor      | `TRequest`, `TValue`                  |
+
+### Generics
+
+Prefix generic type parameters with `T` followed by a descriptive name. Single-letter generics (`T`, `K`, `U`) are not allowed.
+
+```ts
+// BAD
+function merge<T, K>(a: T, b: K): T & K {
+  return { ...a, ...b };
+}
+
+// GOOD
+function merge<TBase, TOverride>(a: TBase, b: TOverride): TBase & TOverride {
+  return {
+    ...a,
+    ...b,
+  };
+}
+```
+
+### Acronyms
+
+Treat acronyms as whole words with only the first letter capitalized.
+
+```ts
+// BAD
+generateUserURL();
+const FAQList = [];
+
+// GOOD
+generateUserUrl();
+const FaqList = [];
+```
+
+Avoid abbreviations unless widely understood.
+
+## Comments and JSDoc
+
+Favor expressive code over comments. Comments explain "why", not "what".
+
+```ts
+// BAD
+// convert to minutes
+const m = s * 60;
+
+// GOOD
+const SECONDS_IN_MINUTE = 60;
+const minutes = seconds * SECONDS_IN_MINUTE;
+```
+
+Use JSDoc only when the function's behavior is not self-evident. Be concise. Use `@link` to reference related symbols.
+
+```ts
+/**
+ * Subtracts two numbers.
+ */
+function subtract(a: number, b: number): number {
+  return a - b;
+}
+
+/**
+ * Does the opposite of {@link subtract}.
+ */
+function add(a: number, b: number): number {
+  return a + b;
+}
+```
+
+Use TSDoc for public APIs, libraries, and configuration types.
