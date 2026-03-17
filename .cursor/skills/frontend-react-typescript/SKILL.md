@@ -1,6 +1,6 @@
 ---
 name: react-typescript
-description: Use when implementing React 19 patterns — props typing, extending HTML elements, generic components, useTransition, useRef typing, context, custom hooks, compound components, or multi-step ref patterns. Triggers on React 19 component patterns, forwardRef migration, createRadioGroup, compound components, or slot props.
+description: Use when implementing React 19 patterns — props typing, SSR/hydration-safe components, generic components, useTransition, useRef typing, context, custom hooks, compound components, or bulletproof providers. Triggers on React 19 component patterns, forwardRef migration, createRadioGroup, compound components, slot props, SSR frameworks (Next.js, Remix, TanStack Start), portals, or multiple component instances.
 ---
 
 # React 19 + TypeScript — Patterns Reference
@@ -251,5 +251,185 @@ function Editor({ content }: { readonly content: string }) {
 // GOOD
 function Editor({ initialContent }: { readonly initialContent: string }) {
   const [value, setValue] = useState(initialContent);
+}
+```
+
+## Bulletproof Patterns
+
+Components must survive SSR, hydration, portals, multiple instances, and concurrent rendering. Apply these when building reusable providers or components used in Next.js, Remix, TanStack Start, or any SSR framework.
+
+### Server-Proof
+
+Never use browser APIs (`localStorage`, `window`, `document`) during render. Move them into `useEffect`.
+
+```tsx
+// BAD - crashes in SSR
+function ThemeProvider({ children }: { readonly children: React.ReactNode }) {
+  const [theme, setTheme] = useState(localStorage.getItem('theme') ?? 'light');
+  return <div className={theme}>{children}</div>;
+}
+
+// GOOD
+function ThemeProvider({ children }: { readonly children: React.ReactNode }) {
+  const [theme, setTheme] = useState('light');
+  useEffect(() => {
+    setTheme(localStorage.getItem('theme') ?? 'light');
+  }, []);
+  return <div className={theme}>{children}</div>;
+}
+```
+
+### Hydration-Proof
+
+Avoid flash of wrong content. For values read from `localStorage` that affect initial paint, inject a sync script that runs before React hydrates:
+
+```tsx
+function ThemeProvider({ children }: { readonly children: React.ReactNode }) {
+  const id = useId();
+  return (
+    <>
+      <div id={id}>{children}</div>
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `try{var t=localStorage.getItem('theme')||'light';document.getElementById('${id}').className=t}catch(e){}`,
+        }}
+      />
+    </>
+  );
+}
+```
+
+Use `useId()` so multiple instances don't collide (see Instance-Proof).
+
+### Instance-Proof
+
+Use `useId()` for DOM IDs when the component may be rendered multiple times. Hardcoded IDs cause collisions.
+
+```tsx
+// BAD - two ThemeProviders fight over same ID
+<div id="theme">{children}</div>
+
+// GOOD
+function ThemeProvider({ children }: { readonly children: React.ReactNode }) {
+  const id = useId();
+  return <div id={id}>{children}</div>;
+}
+```
+
+### Composition-Proof
+
+Prefer context over `React.cloneElement` to pass data to children. `cloneElement` breaks with RSC, `React.lazy`, or async children.
+
+```tsx
+// BAD - cloneElement fails with RSC/lazy
+return React.Children.map(children, (child) =>
+  React.cloneElement(child, { theme })
+);
+
+// GOOD - context works everywhere
+const ThemeContext = createContext<'light' | 'dark'>('light');
+return (
+  <ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider>
+);
+```
+
+### Portal-Proof
+
+Global listeners (keyboard shortcuts, resize) must target the correct `window`. In portals, iframes, or pop-out windows, use `ownerDocument.defaultView`:
+
+```tsx
+function ThemeProvider({ children }: { readonly children: React.ReactNode }) {
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const win = ref.current?.ownerDocument.defaultView ?? window;
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey && e.key === 'd') setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+    };
+    win.addEventListener('keydown', handler);
+    return () => win.removeEventListener('keydown', handler);
+  }, []);
+
+  return <div ref={ref} className={theme}>{children}</div>;
+}
+```
+
+### Activity-Proof
+
+When wrapped in `<Activity>`, hidden components keep their DOM. A `<style>` that sets `:root` variables still applies globally when hidden. Inline styles on a container avoid this only when variables don't need `:root` scope. For `:root`-scoped variables (required by pseudo-elements or third-party libs), disable the `<style>` block via `media="not all"` instead:
+
+```tsx
+function DarkTheme({ children }: { readonly children: React.ReactNode }) {
+  const styleRef = useRef<HTMLStyleElement>(null);
+
+  useLayoutEffect(() => {
+    if (!styleRef.current) return;
+    styleRef.current.media = 'all';
+    return () => {
+      if (styleRef.current) styleRef.current.media = 'not all';
+    };
+  }, []);
+
+  return (
+    <>
+      <style ref={styleRef} media="not all">{`:root{--bg:#000;--fg:#fff}`}</style>
+      {children}
+    </>
+  );
+}
+```
+
+### Transition-Proof
+
+For `<ViewTransition>` (React 19), state updates must go through `startTransition` or the transition won't animate:
+
+```tsx
+<button onClick={() => startTransition(() => setShowAdvanced(!showAdvanced))}>
+  {showAdvanced ? 'Simple' : 'Advanced'}
+</button>
+```
+
+### Leak-Proof (Server Components)
+
+Use `taintUniqueValue` / `taintObjectReference` to block sensitive data from reaching Client Components:
+
+```tsx
+import { experimental_taintUniqueValue } from 'react';
+
+async function Dashboard() {
+  const user = await getUser();
+  experimental_taintUniqueValue('Do not pass token to client.', user, user.token);
+  return <UserThemeConfig user={user} />;
+}
+```
+
+### Future-Proof
+
+`useMemo` is a performance hint, not a semantic guarantee. React may discard cached values. When correctness depends on persistence (e.g. generated colors that must stay stable), use `useState`:
+
+```tsx
+// BAD - useMemo can be discarded, colors may flicker
+const colors = useMemo(() => generateAccentColors(baseTheme), [baseTheme]);
+
+// GOOD - useState provides persistence guarantee
+const [colors, setColors] = useState(() => generateAccentColors(baseTheme));
+useEffect(() => {
+  setColors(generateAccentColors(baseTheme));
+}, [baseTheme]);
+```
+
+### Concurrent-Proof (Server Components)
+
+Wrap data fetches in `React.cache()` to deduplicate within a single request when the same component renders in multiple places:
+
+```tsx
+import { cache } from 'react';
+
+const getPreferences = cache((userId: string) => db.preferences.get(userId));
+
+async function ThemeProvider({ userId, children }: Props) {
+  const prefs = await getPreferences(userId);
+  return <div className={prefs.theme}>{children}</div>;
 }
 ```
